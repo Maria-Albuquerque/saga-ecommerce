@@ -1,0 +1,63 @@
+@startuml sequence-compensation-flow
+title Saga de Orquestração: falha e compensação (pagamento recusado)
+skinparam shadowing false
+skinparam defaultFontName DejaVu Sans
+skinparam sequenceMessageAlign center
+autonumber
+
+actor Cliente
+participant "Order Service\n(API)" as API
+participant "Saga Orchestrator\n(Order Service)" as Orch #FFF3C4
+queue "Message Broker" as MB #EDE7F6
+participant "Inventory Service" as Inv #E6F4EA
+participant "Payment Service" as Pay #FDECEA
+participant "Gateway\nFinanceiro" as GW
+
+Cliente -> API : POST /orders
+API -> Orch : inicia CreateOrderSaga
+note right of Orch : Order = PENDING\nsaga_state = STARTED
+API --> Cliente : 202 Accepted {orderId}
+
+Orch -> MB : ReserveStockCommand
+MB -> Inv : ReserveStockCommand
+Inv -> MB : StockReserved
+MB -> Orch : StockReserved
+note right of Orch : saga_state = STOCK_RESERVED
+
+Orch -> MB : ProcessPaymentCommand
+MB -> Pay : ProcessPaymentCommand
+Pay -> GW : autoriza cobrança
+GW --> Pay : **recusado** (saldo insuficiente)
+Pay -> MB : PaymentRejected
+MB -> Orch : PaymentRejected
+
+note over Orch #FFCDD2
+  Falha de negócio detectada.
+  saga_state = COMPENSATING
+  Inicia as transações compensatórias
+  na ordem inversa dos passos concluídos.
+end note
+
+== Compensação 1: Release Stock ==
+Orch -> MB : ReleaseStockCommand
+MB -> Inv : ReleaseStockCommand
+activate Inv
+note right of Inv
+  Compensação idempotente:
+  se a reserva já foi liberada,
+  apenas confirma de novo.
+end note
+Inv -> MB : StockReleased
+deactivate Inv
+MB -> Orch : StockReleased
+
+== Compensação 2: Cancel Order ==
+Orch -> Orch : cancela o pedido (transação local)
+note right of Orch
+  Order = CANCELLED
+  saga_state = COMPENSATED
+end note
+
+Cliente -> API : GET /orders/{orderId} (polling)
+API --> Cliente : 200 {status: CANCELLED, motivo: PAGAMENTO_RECUSADO}
+@enduml

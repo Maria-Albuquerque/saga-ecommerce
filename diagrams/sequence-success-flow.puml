@@ -1,0 +1,61 @@
+@startuml sequence-success-flow
+title Saga de Orquestração: fluxo de sucesso (compra concluída)
+skinparam shadowing false
+skinparam defaultFontName DejaVu Sans
+skinparam sequenceMessageAlign center
+autonumber
+
+actor Cliente
+participant "Order Service\n(API)" as API
+participant "Saga Orchestrator\n(Order Service)" as Orch #FFF3C4
+queue "Message Broker" as MB #EDE7F6
+participant "Inventory Service" as Inv #E6F4EA
+participant "Payment Service" as Pay #FDECEA
+participant "Gateway\nFinanceiro" as GW
+
+Cliente -> API : POST /orders (síncrono)
+activate API
+API -> Orch : inicia CreateOrderSaga
+activate Orch
+note right of Orch
+  Transação local única:
+  Order = PENDING
+  saga_state = STARTED
+  + registro no Outbox
+end note
+API --> Cliente : 202 Accepted {orderId}
+deactivate API
+
+Orch -> MB : ReserveStockCommand (assíncrono)
+MB -> Inv : ReserveStockCommand
+activate Inv
+note right of Inv
+  Idempotent Consumer:
+  checa processed_messages
+  Reserva o estoque (transação local)
+end note
+Inv -> MB : StockReserved
+deactivate Inv
+MB -> Orch : StockReserved
+note right of Orch : saga_state = STOCK_RESERVED
+
+Orch -> MB : ProcessPaymentCommand (assíncrono)
+MB -> Pay : ProcessPaymentCommand
+activate Pay
+Pay -> GW : autoriza cobrança (síncrono, com Retry + Circuit Breaker)
+GW --> Pay : aprovado
+Pay -> MB : PaymentApproved
+deactivate Pay
+MB -> Orch : PaymentApproved
+note right of Orch : saga_state = PAYMENT_APPROVED
+
+Orch -> Orch : aprova o pedido (transação local)
+note right of Orch
+  Order = APPROVED
+  saga_state = COMPLETED
+end note
+deactivate Orch
+
+Cliente -> API : GET /orders/{orderId} (polling)
+API --> Cliente : 200 {status: APPROVED}
+@enduml

@@ -1,0 +1,55 @@
+@startuml saga-architecture-overview
+title Saga de Orquestração: visão geral da arquitetura (e-commerce)
+skinparam shadowing false
+skinparam defaultFontName DejaVu Sans
+skinparam roundCorner 12
+skinparam ArrowColor #444444
+skinparam componentStyle rectangle
+skinparam package {
+  BorderColor #555555
+  BackgroundColor #FAFAFA
+}
+left to right direction
+
+actor "Cliente" as Client
+
+package "Order Service" as OS #E8F1FB {
+  component "API de Pedidos\nPOST /orders\nGET /orders/{id}" as OrderAPI
+  component "Saga Orchestrator\n(CreateOrderSaga)" as Orch #FFF3C4
+  database "Orders DB\norders | saga_state\noutbox | processed_messages" as OrderDB
+}
+
+queue "Message Broker\n(Kafka ou RabbitMQ)" as Broker #EDE7F6
+
+package "Inventory Service" as IS #E6F4EA {
+  component "Command Handler\nReserveStock / ReleaseStock" as InvHandler
+  database "Inventory DB\nstock | reservations\noutbox | processed_messages" as InvDB
+}
+
+package "Payment Service" as PS #FDECEA {
+  component "Command Handler\nProcessPayment" as PayHandler
+  component "Circuit Breaker\n+ Retry" as CB
+  database "Payment DB\npayments\noutbox | processed_messages" as PayDB
+}
+
+cloud "Gateway Financeiro\n(externo)" as Gateway
+queue "Dead Letter Queue\n(DLQ)" as DLQ #FFE0B2
+
+Client --> OrderAPI : 1. cria pedido\n(202 Accepted + orderId)
+OrderAPI --> Orch : inicia saga
+Orch --> OrderDB : estado da saga\n+ pedido PENDING
+Orch --> Broker : comandos\n(via Outbox)
+Broker --> Orch : respostas\n(replies)
+
+Broker --> InvHandler : ReserveStockCommand\nReleaseStockCommand
+InvHandler --> InvDB
+InvHandler --> Broker : StockReserved\nStockOutOfStock\nStockReleased
+
+Broker --> PayHandler : ProcessPaymentCommand
+PayHandler --> PayDB
+PayHandler --> CB
+CB --> Gateway : cobra
+PayHandler --> Broker : PaymentApproved\nPaymentRejected
+
+Broker ..> DLQ : mensagens que\nexcederam retries
+@enduml
