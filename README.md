@@ -8,7 +8,7 @@ Blueprint de arquitetura para a migração de um monólito de comércio eletrôn
 
 A empresa está migrando o seu monólito de e-commerce para uma arquitetura distribuída. O fluxo crítico de compra passa por três domínios desacoplados, cada um com a sua própria base de dados (padrão *Database per Service*):
 
-| Serviço | Responsabilidade |
+| Servico | Responsabilidade |
 |---|---|
 | **Order Service** | Registrar e gerenciar o ciclo de vida do pedido |
 | **Inventory Service** | Gerenciar o estoque e realizar reservas temporárias |
